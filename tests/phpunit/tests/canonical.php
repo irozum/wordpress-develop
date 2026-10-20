@@ -655,6 +655,143 @@ class Tests_Canonical extends WP_Canonical_UnitTestCase {
 	}
 
 	/**
+	 * Term archive URLs for slugs named like feed endpoints keep the slug, and a
+	 * real trailing feed segment is still handled.
+	 *
+	 * @ticket 21700
+	 *
+	 * @dataProvider data_canonical_term_slug_matching_feed_endpoint
+	 *
+	 * @param string $taxonomy Taxonomy name.
+	 * @param string $base     Permastruct base for the taxonomy.
+	 * @param string $slug     Term slug, named like a feed endpoint.
+	 * @param string $suffix   Requested URL suffix after the term slug.
+	 * @param string $expected Expected canonical suffix after the term slug.
+	 */
+	public function test_canonical_term_slug_matching_feed_endpoint( $taxonomy, $base, $slug, $suffix, $expected ) {
+		register_taxonomy(
+			'wp_tests_topic',
+			'post',
+			array(
+				'public'  => true,
+				'rewrite' => array( 'slug' => 'topic' ),
+			)
+		);
+		flush_rewrite_rules( false );
+
+		$term_id = self::factory()->term->create(
+			array(
+				'taxonomy' => $taxonomy,
+				'slug'     => $slug,
+			)
+		);
+
+		// More than posts_per_page (5) so that page 2 exists.
+		$post_ids = self::factory()->post->create_many( 6 );
+		foreach ( $post_ids as $post_id ) {
+			wp_set_object_terms( $post_id, array( $term_id ), $taxonomy );
+		}
+
+		$this->assertCanonical( "/$base/$slug/$suffix", "/$base/$slug/$expected", 21700 );
+	}
+
+	/**
+	 * Data provider.
+	 *
+	 * @return array[]
+	 */
+	public function data_canonical_term_slug_matching_feed_endpoint() {
+		$cases = array(
+			// Requested suffix => expected canonical suffix.
+			'feed'                => array( 'feed/', 'feed/' ),
+			'feed atom'           => array( 'feed/atom/', 'feed/atom/' ),
+			'feed rdf'            => array( 'feed/rdf/', 'feed/rdf/' ),
+			'feed rss'            => array( 'feed/rss/', 'feed/' ),
+			'feed rss2'           => array( 'feed/rss2/', 'feed/' ),
+			'feed shorthand atom' => array( 'atom/', 'feed/atom/' ),
+			'feed shorthand rss2' => array( 'rss2/', 'feed/' ),
+		);
+
+		$taxonomies = array(
+			'tag'      => array( 'post_tag', 'tag' ),
+			'category' => array( 'category', 'category' ),
+			'custom'   => array( 'wp_tests_topic', 'topic' ),
+		);
+
+		$data = array();
+		foreach ( $taxonomies as $label => $taxonomy ) {
+			foreach ( array( 'feed', 'rss', 'rss2', 'rdf', 'atom' ) as $slug ) {
+				foreach ( $cases as $case_label => $case ) {
+					// /tag/feed/atom/ is ambiguous between a feed shorthand and a "feed" term followed by atom.
+					if ( 'feed' === $slug && 0 === strpos( $case_label, 'feed shorthand' ) ) {
+						continue;
+					}
+
+					$data[ "$label $slug $case_label" ] = array( $taxonomy[0], $taxonomy[1], $slug, $case[0], $case[1] );
+				}
+			}
+		}
+
+		return $data;
+	}
+
+	/**
+	 * Single post URLs under a category named like a feed endpoint keep the
+	 * category when combined with comment pagination, and comment feeds still
+	 * resolve.
+	 *
+	 * Post slugs cannot match feed endpoints, because wp_unique_post_slug()
+	 * rewrites them, so the feed-like segment is a category here.
+	 *
+	 * @ticket 21700
+	 *
+	 * @dataProvider data_canonical_post_in_category_matching_feed_endpoint
+	 *
+	 * @param string $slug     Category slug, named like a feed endpoint.
+	 * @param string $suffix   Requested URL suffix after the post slug.
+	 * @param string $expected Expected canonical suffix after the post slug.
+	 */
+	public function test_canonical_post_in_category_matching_feed_endpoint( $slug, $suffix, $expected ) {
+		$this->set_permalink_structure( '/%category%/%postname%/' );
+		flush_rewrite_rules( false );
+
+		$cat_id  = self::factory()->category->create( array( 'slug' => $slug ) );
+		$post_id = self::factory()->post->create(
+			array(
+				'post_name'     => 'feed-slug-post',
+				'post_category' => array( $cat_id ),
+			)
+		);
+
+		// More than comments_per_page (5) per page, so that comment page 2 is not the default page.
+		self::factory()->comment->create_many( 11, array( 'comment_post_ID' => $post_id ) );
+
+		$this->assertCanonical( "/$slug/feed-slug-post/$suffix", "/$slug/feed-slug-post/$expected", 21700 );
+	}
+
+	/**
+	 * Data provider.
+	 *
+	 * @return array[]
+	 */
+	public function data_canonical_post_in_category_matching_feed_endpoint() {
+		$cases = array(
+			'comment page'       => array( 'comment-page-2/', 'comment-page-2/' ),
+			'comments feed'      => array( 'feed/', 'feed/' ),
+			'comments feed atom' => array( 'feed/atom/', 'feed/atom/' ),
+		);
+
+		$data = array();
+		foreach ( array( 'feed', 'rss', 'rss2', 'rdf', 'atom' ) as $slug ) {
+			foreach ( $cases as $case_label => $case ) {
+				$data[ "$slug $case_label" ] = array( $slug, $case[0], $case[1] );
+			}
+		}
+
+		return $data;
+	}
+
+	/**
 	 * Test canonical redirects for attachment pages when the option is disabled.
 	 *
 	 * @ticket 57913
